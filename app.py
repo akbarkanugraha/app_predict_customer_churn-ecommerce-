@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import json
 import os
+import warnings
+warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────
 # Page Config
@@ -88,10 +91,94 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# Fitur TEPAT yang dipakai saat training
-# (sesuai header CSV training)
+# Load Model + Metadata
 # ─────────────────────────────────────────────
-FEATURE_COLS = [
+MODEL_PATHS    = ["models/best_churn_model.pkl", "best_churn_model.pkl"]
+METADATA_PATHS = ["models/model_metadata.json",  "model_metadata.json"]
+
+@st.cache_resource
+def load_model():
+    for path in MODEL_PATHS:
+        if os.path.exists(path):
+            return joblib.load(path), path
+    return None, None
+
+@st.cache_data
+def load_metadata():
+    for path in METADATA_PATHS:
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f)
+    return {}
+
+model, model_path = load_model()
+metadata = load_metadata()
+
+# ─────────────────────────────────────────────
+# Ekstrak Info Model Secara Dinamis
+# ─────────────────────────────────────────────
+def get_model_info(mdl, meta: dict):
+    """
+    Ekstrak info model dari metadata JSON (diutamakan) atau
+    dari introspeksi pipeline sebagai fallback.
+
+    Metadata JSON (disimpan notebook):
+        model_name      : nama kelas classifier
+        pipeline_steps  : list nama step
+        feature_cols    : list nama fitur input
+        metrics         : dict {recall, precision, f1, fbeta, accuracy}
+        categorical_values : dict {kolom: [nilai_valid]}
+    """
+    info = {
+        "model_name":          "Unknown",
+        "pipeline_desc":       "",
+        "feature_cols":        None,
+        "metrics":             {},
+        "categorical_values":  {},
+    }
+
+    # ── Utama: baca dari metadata JSON ──
+    if meta:
+        info["model_name"]         = meta.get("model_name", info["model_name"])
+        info["pipeline_desc"]      = meta.get("pipeline_desc", "")
+        info["feature_cols"]       = meta.get("feature_cols")
+        info["metrics"]            = meta.get("metrics", {})
+        info["categorical_values"] = meta.get("categorical_values", {})
+        return info
+
+    # ── Fallback: introspeksi pipeline ──
+    if mdl is None:
+        return info
+
+    # Nama classifier
+    clf = mdl.named_steps.get("classifier")
+    if clf is not None:
+        info["model_name"] = type(clf).__name__
+
+    # Deskripsi pipeline
+    info["pipeline_desc"] = " · ".join(type(s).__name__ for _, s in mdl.steps)
+
+    # Kolom fitur dari ColumnTransformer
+    pre = mdl.named_steps.get("transform") or mdl.named_steps.get("preprocessor")
+    if pre is not None:
+        cols = []
+        for _, _, c in pre.transformers_:
+            if isinstance(c, list):
+                cols.extend(c)
+        if cols:
+            info["feature_cols"] = cols
+
+    return info
+
+
+_info         = get_model_info(model, metadata)
+MODEL_NAME    = _info["model_name"]
+PIPELINE_DESC = _info["pipeline_desc"]
+METRICS       = _info["metrics"]
+
+# ── Kolom fitur (dari metadata atau fallback hardcode sesuai notebook) ──
+# Urutan harus sesuai dengan X = df_clean.drop('Churn')
+_DEFAULT_FEATURE_COLS = [
     "Tenure",
     "WarehouseToHome",
     "NumberOfDeviceRegistered",
@@ -103,35 +190,41 @@ FEATURE_COLS = [
     "DaySinceLastOrder",
     "CashbackAmount",
 ]
+FEATURE_COLS = _info["feature_cols"] or _DEFAULT_FEATURE_COLS
 
-PREF_ORDER_CATS  = ["Laptop & Accessory", "Mobile Phone", "Fashion", "Grocery", "Others"]
-MARITAL_STATUSES = ["Single", "Divorced", "Married"]
-
-# ─────────────────────────────────────────────
-# Load Model
-# ─────────────────────────────────────────────
-@st.cache_resource
-def load_model():
-    for path in ["models/best_churn_model.pkl", "best_churn_model.pkl"]:
-        if os.path.exists(path):
-            return joblib.load(path)
-    return None
-
-model = load_model()
+# ── Nilai kategorikal valid (dari metadata atau fallback) ──
+_DEFAULT_CAT_VALUES = {
+    "PreferedOrderCat": ["Laptop & Accessory", "Mobile Phone", "Fashion", "Grocery", "Others"],
+    "MaritalStatus":    ["Single", "Divorced", "Married"],
+}
+_cat_from_meta = _info["categorical_values"]
+PREF_ORDER_CATS  = _cat_from_meta.get("PreferedOrderCat", _DEFAULT_CAT_VALUES["PreferedOrderCat"])
+MARITAL_STATUSES = _cat_from_meta.get("MaritalStatus",    _DEFAULT_CAT_VALUES["MaritalStatus"])
 
 # ─────────────────────────────────────────────
-# Predict helper
+# Predict Helper
 # ─────────────────────────────────────────────
 def predict(df: pd.DataFrame):
-    """Return (labels ndarray, probabilities ndarray)."""
+    """
+    Return (labels ndarray, probabilities ndarray).
+    Mendukung semua classifier dalam pipeline:
+      - predict_proba  → dipakai langsung
+      - decision_function → sigmoid transform
+      - fallback         → label sebagai probabilitas
+    """
     preds = model.predict(df)
-    try:
+    clf   = model.named_steps.get("classifier")
+
+    if clf is not None and hasattr(clf, "predict_proba"):
         probas = model.predict_proba(df)[:, 1]
-    except AttributeError:
-        # SVM tanpa probability=True → pakai decision_function + sigmoid
+    elif clf is not None and hasattr(clf, "decision_function"):
         scores = model.decision_function(df)
         probas = 1 / (1 + np.exp(-scores))
+    else:
+        probas = preds.astype(float)
+
     return preds, probas
+
 
 def risk_label(p: float) -> str:
     if p >= 0.7: return "🔴 Tinggi"
@@ -139,12 +232,15 @@ def risk_label(p: float) -> str:
     return "🟢 Rendah"
 
 # ─────────────────────────────────────────────
-# Hero Header
+# Hero Header — nama model dari metadata/pipeline
 # ─────────────────────────────────────────────
-st.markdown("""
+pipeline_line = f"Pipeline: {PIPELINE_DESC}" if PIPELINE_DESC else ""
+st.markdown(f"""
 <div class="hero-card">
     <h1>🛒 Customer Churn Predictor</h1>
-    <p>E-Commerce · Capstone ML Project · Model: SVM | Pipeline: OHE · BinaryEncoder · Imputer · RobustScaler · SelectKBest · SMOTE</p>
+    <p>E-Commerce · Capstone ML Project · Model: <b>{MODEL_NAME}</b>
+    {"&nbsp;|&nbsp;" + pipeline_line if pipeline_line else ""}
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -153,34 +249,57 @@ st.markdown("""
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Info Aplikasi")
-    st.markdown("""
-    Prediksi **customer churn** menggunakan model SVM yang dilatih dengan 10 fitur:
 
-    | # | Fitur |
-    |---|-------|
-    | 1 | Tenure |
-    | 2 | WarehouseToHome |
-    | 3 | NumberOfDeviceRegistered |
-    | 4 | PreferedOrderCat |
-    | 5 | SatisfactionScore |
-    | 6 | MaritalStatus |
-    | 7 | NumberOfAddress |
-    | 8 | Complain |
-    | 9 | DaySinceLastOrder |
-    | 10 | CashbackAmount |
-    """)
+    # Tabel fitur dinamis
+    feature_table_rows = "\n".join(
+        f"    | {i} | {col} |" for i, col in enumerate(FEATURE_COLS, 1)
+    )
+    st.markdown(f"""
+Prediksi **customer churn** menggunakan model **{MODEL_NAME}** yang dilatih dengan {len(FEATURE_COLS)} fitur:
+
+| # | Fitur |
+|---|-------|
+{feature_table_rows}
+""")
+
     st.divider()
+
     if model is None:
         st.error("⚠️ Model tidak ditemukan!\n\nLetakkan `best_churn_model.pkl` di folder `models/`")
     else:
-        st.success("✅ Model berhasil dimuat")
+        src = "metadata" if metadata else "introspeksi pipeline"
+        st.success(f"✅ Model berhasil dimuat  \n`{MODEL_NAME}` _(dari {src})_")
+
     st.divider()
     st.markdown("**Performa Model (Test Set)**")
-    c1, c2 = st.columns(2)
-    c1.metric("Recall",   "1.00")
-    c2.metric("Presisi",  "0.15")
-    c1.metric("F1-Score", "0.264")
-    c2.metric("Fokus",    "Recall ↑")
+
+    if METRICS:
+        # Tampilkan metrik dari metadata JSON (otomatis dari notebook)
+        metric_keys = [
+            ("Recall",    "recall"),
+            ("Precision", "precision"),
+            ("F1-Score",  "f1"),
+            ("FBeta β=5", "fbeta"),
+            ("Accuracy",  "accuracy"),
+        ]
+        cols_per_row = 2
+        keys_to_show = [(label, key) for label, key in metric_keys if key in METRICS]
+        for i in range(0, len(keys_to_show), cols_per_row):
+            row_cols = st.columns(cols_per_row)
+            for j, (label, key) in enumerate(keys_to_show[i:i + cols_per_row]):
+                val = METRICS[key]
+                row_cols[j].metric(label, f"{val:.3f}" if isinstance(val, float) else str(val))
+    else:
+        # Fallback: metrik hardcode (akan hilang setelah metadata tersedia)
+        c1, c2 = st.columns(2)
+        c1.metric("Recall",   "—")
+        c2.metric("Presisi",  "—")
+        c1.metric("F1-Score", "—")
+        c2.metric("Fokus",    "Recall ↑")
+        st.caption("💡 Tambahkan kode penyimpan metadata di notebook untuk menampilkan metrik aktual.")
+
+    if metadata.get("saved_at"):
+        st.caption(f"🕒 Disimpan: {metadata['saved_at']}")
 
 # ─────────────────────────────────────────────
 # Tabs
@@ -273,7 +392,8 @@ with tab1:
             "DaySinceLastOrder":        day_since_last,
             "CashbackAmount":           cashback,
         }
-        df_single = pd.DataFrame([row])
+        # Pastikan urutan kolom sesuai FEATURE_COLS
+        df_single = pd.DataFrame([{k: row[k] for k in FEATURE_COLS}])
 
         preds, probas = predict(df_single)
         pred_label = int(preds[0])
@@ -326,9 +446,9 @@ with tab2:
         st.stop()
 
     st.markdown('<p class="section-title">Upload CSV untuk Prediksi Massal</p>', unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div class="info-box">
-    📁 Upload file CSV dengan <b>10 kolom fitur</b> sesuai format training.S
+    📁 Upload file CSV dengan <b>{len(FEATURE_COLS)} kolom fitur</b> sesuai format training.
     Urutan kolom bebas — aplikasi mencocokkan berdasarkan <b>nama kolom</b>.
     </div>
     """, unsafe_allow_html=True)
@@ -351,7 +471,7 @@ with tab2:
                 )
                 st.stop()
 
-            # Kolom extra (termasuk Churn) → abaikan
+            # Kolom extra → abaikan
             extra = [c for c in df_raw.columns if c not in FEATURE_COLS]
             if extra:
                 st.markdown(
@@ -446,36 +566,38 @@ with tab2:
 # TAB 3 — FORMAT GUIDE + TEMPLATE DOWNLOAD
 # ══════════════════════════════════════════════
 with tab3:
-    st.markdown('<p class="section-title">Format Kolom CSV (10 Fitur Wajib)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Format Kolom CSV (Fitur Wajib)</p>', unsafe_allow_html=True)
 
-    guide = pd.DataFrame({
-        "No": range(1, 11),
-        "Nama Kolom": FEATURE_COLS,
-        "Tipe": [
-            "float", "float", "int",
-            "object", "int (1–5)",
-            "object", "int",
-            "int (0/1)", "float", "float"
-        ],
-        "Contoh": [
-            "12.0", "20.0", "3",
-            "Laptop & Accessory", "3",
-            "Single", "3",
-            "0 atau 1", "7.0", "150.0"
-        ],
-        "Keterangan / Nilai yang Valid": [
-            "Lama berlangganan dalam bulan",
-            "Jarak gudang ke rumah (km)",
-            "Jumlah perangkat terdaftar di akun",
-            "Laptop & Accessory | Mobile Phone | Fashion | Grocery | Others",
-            "Skala 1 (sangat tidak puas) sampai 5 (sangat puas)",
-            "Single | Divorced | Married",
-            "Jumlah alamat pengiriman terdaftar",
-            "0 = tidak pernah komplain · 1 = pernah komplain",
-            "Hari sejak terakhir kali melakukan order",
-            "Rata-rata nominal cashback yang diterima",
-        ]
-    })
+    # Tipe & keterangan kolom — dinamis dari FEATURE_COLS, meta jika ada
+    col_meta = metadata.get("column_info", {})
+
+    _default_col_meta = {
+        "Tenure":                   ("float",       "12.0",               "Lama berlangganan dalam bulan"),
+        "WarehouseToHome":          ("float",       "20.0",               "Jarak gudang ke rumah (km)"),
+        "NumberOfDeviceRegistered": ("int",         "3",                  "Jumlah perangkat terdaftar di akun"),
+        "PreferedOrderCat":         ("object",      "Laptop & Accessory", "Laptop & Accessory | Mobile Phone | Fashion | Grocery | Others"),
+        "SatisfactionScore":        ("int (1–5)",   "3",                  "Skala 1 (sangat tidak puas) sampai 5 (sangat puas)"),
+        "MaritalStatus":            ("object",      "Single",             "Single | Divorced | Married"),
+        "NumberOfAddress":          ("int",         "3",                  "Jumlah alamat pengiriman terdaftar"),
+        "Complain":                 ("int (0/1)",   "0 atau 1",           "0 = tidak pernah komplain · 1 = pernah komplain"),
+        "DaySinceLastOrder":        ("float",       "7.0",                "Hari sejak terakhir kali melakukan order"),
+        "CashbackAmount":           ("float",       "150.0",              "Rata-rata nominal cashback yang diterima"),
+    }
+
+    guide_rows = []
+    for i, col in enumerate(FEATURE_COLS, 1):
+        if col in col_meta:
+            tipe     = col_meta[col].get("dtype", "—")
+            contoh   = str(col_meta[col].get("example", "—"))
+            ket      = col_meta[col].get("description", "—")
+        elif col in _default_col_meta:
+            tipe, contoh, ket = _default_col_meta[col]
+        else:
+            tipe, contoh, ket = ("—", "—", "—")
+        guide_rows.append({"No": i, "Nama Kolom": col, "Tipe": tipe,
+                           "Contoh": contoh, "Keterangan / Nilai yang Valid": ket})
+
+    guide = pd.DataFrame(guide_rows)
     st.dataframe(guide, use_container_width=True, hide_index=True)
 
     st.markdown("---")
@@ -486,14 +608,19 @@ with tab3:
         "Tenure":                   [12.0, 3.0, 24.0, 1.0, 18.0],
         "WarehouseToHome":          [20.0, 45.0, 10.0, 70.0, 30.0],
         "NumberOfDeviceRegistered": [3, 2, 4, 1, 3],
-        "PreferedOrderCat":         ["Laptop & Accessory", "Mobile Phone", "Fashion", "Grocery", "Others"],
+        "PreferedOrderCat":         [PREF_ORDER_CATS[0], PREF_ORDER_CATS[1 % len(PREF_ORDER_CATS)],
+                                     PREF_ORDER_CATS[2 % len(PREF_ORDER_CATS)], PREF_ORDER_CATS[3 % len(PREF_ORDER_CATS)],
+                                     PREF_ORDER_CATS[-1]],
         "SatisfactionScore":        [4, 1, 5, 2, 3],
-        "MaritalStatus":            ["Single", "Married", "Divorced", "Single", "Married"],
+        "MaritalStatus":            [MARITAL_STATUSES[0], MARITAL_STATUSES[1 % len(MARITAL_STATUSES)],
+                                     MARITAL_STATUSES[2 % len(MARITAL_STATUSES)], MARITAL_STATUSES[0],
+                                     MARITAL_STATUSES[1 % len(MARITAL_STATUSES)]],
         "NumberOfAddress":          [3, 5, 2, 8, 3],
         "Complain":                 [0, 1, 0, 1, 0],
         "DaySinceLastOrder":        [7.0, 30.0, 3.0, 45.0, 5.0],
         "CashbackAmount":           [150.0, 80.0, 220.0, 50.0, 175.0],
-    })
+    })[FEATURE_COLS]   # urutan sesuai FEATURE_COLS
+
     st.dataframe(template, use_container_width=True, hide_index=True)
 
     csv_tmpl = template.to_csv(index=False).encode("utf-8")
