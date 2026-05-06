@@ -1,7 +1,9 @@
 # 🛒 E-Commerce Customer Churn Prediction  
 ### End-to-End Machine Learning & Streamlit App
 
-Aplikasi dan model machine learning untuk memprediksi **customer churn** pada platform e-commerce, dilengkapi dengan deployment menggunakan **Streamlit**.
+Aplikasi dan model machine learning untuk memprediksi **customer churn** pada platform e-commerce
+
+Link apps : https://predict-customer-churn-27.streamlit.app/
 
 ---
 
