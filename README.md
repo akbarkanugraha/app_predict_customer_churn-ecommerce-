@@ -1,4 +1,4 @@
-# 🛒 E-Commerce Customer Churn Prediction  
+# E-Commerce Customer Churn Prediction  
 ### End-to-End Machine Learning & Streamlit App
 
 Aplikasi dan model machine learning untuk memprediksi **customer churn** pada platform e-commerce
@@ -7,7 +7,7 @@ Link apps : https://predict-customer-churn-27.streamlit.app/
 
 ---
 
-## 📌 1. Overview Project
+## 1. Overview Project
 
 Proyek ini membangun sistem **end-to-end machine learning** untuk mengidentifikasi pelanggan yang berpotensi berhenti menggunakan layanan (churn).
 
@@ -31,18 +31,18 @@ Dataset berisi informasi pelanggan seperti:
 
 ---
 
-## 🎯 2. Tujuan
+## 2. Tujuan
 
 1. Membangun model klasifikasi dengan **Recall tinggi**  
 2. Mengidentifikasi faktor utama churn menggunakan **SHAP**  
 3. Memberikan **insight actionable** untuk tim bisnis  
 
 **Metric Utama:**  
-➡️ Recall (menghindari False Negative / pelanggan churn yang tidak terdeteksi)
+F3 Score (menghindari False Negative / pelanggan churn yang tidak terdeteksi)
 
 ---
 
-## 👥 3. Stakeholders
+## 3. Stakeholders
 
 | Stakeholder | Peran |
 |------------|------|
@@ -51,7 +51,7 @@ Dataset berisi informasi pelanggan seperti:
 
 ---
 
-## 🧠 4. Model Result
+## 4. Model Result
 
 **Model Terbaik:**  
 - Support Vector Machine (SVM) (hasil tuning)
@@ -67,7 +67,7 @@ Dataset berisi informasi pelanggan seperti:
 
 ---
 
-## 💰 5. Cost-Benefit Analysis
+## 5. Cost-Benefit Analysis
 
 Asumsi bisnis:
 
@@ -75,12 +75,12 @@ Asumsi bisnis:
 - Customer Lifetime Value: **Rp 1.500.000**
 - Kerugian jika churn tidak terdeteksi: **Rp 1.500.000**
 
-📊 Insight:
+Insight:
 Model membantu mengurangi kerugian dengan mendeteksi pelanggan berisiko lebih awal.
 
 ---
 
-## 🖥️ 6. Fitur Aplikasi (Streamlit)
+## 6. Fitur Aplikasi (Streamlit)
 
 | Fitur | Deskripsi |
 |------|----------|
@@ -93,7 +93,7 @@ Model membantu mengurangi kerugian dengan mendeteksi pelanggan berisiko lebih aw
 
 ---
 
-## 📋 7. Format Input CSV
+## 7. Format Input CSV
 
 Kolom yang diperlukan:
 
@@ -105,7 +105,7 @@ DaySinceLastOrder, CashbackAmount
 
 ---
 
-## 📁 8. Struktur Project
+## 8. Struktur Project
 
 project/
 ├── app.py
@@ -120,9 +120,9 @@ project/
 
 ---
 
-## ⚙️ 9. Cara Menjalankan
+## 9. Cara Menjalankan
 
-### ▶️ Jalankan Lokal
+### Jalankan Lokal
 
 pip install -r requirements.txt
 
@@ -133,7 +133,7 @@ cp /path/to/best_churn_model.pkl models/
 streamlit run app.py
 ---
 
-## 🧪 10. Generate Model dari Notebook
+## 10. Generate Model dari Notebook
 
 Di notebook:
 
@@ -144,24 +144,24 @@ Pastikan file ini tersedia sebelum menjalankan aplikasi.
 
 ---
 
-## 💡 11. Rekomendasi
+## 11. Rekomendasi
 
-### 📊 Data
+### Data
 - Tambahkan fitur RFM (Recency, Frequency, Monetary)  
 - Gunakan data interaksi (klik, wishlist, dll)
 
-### 🤖 Model
+### Model
 - Retrain setiap 3 bulan  
 - Monitor model drift  
 
-### 📈 Bisnis
+### Bisnis
 - Jalankan model secara batch mingguan  
 - Integrasikan ke CRM system  
 - Kirim campaign retensi 1–2 minggu sebelum churn  
 
 ---
 
-## 🚀 12. Future Improvement
+## 12. Future Improvement
 
 - Real-time prediction (API)
 - Dashboard monitoring model
